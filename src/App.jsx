@@ -15,6 +15,8 @@ export default function App() {
   // --- ESTADOS DO SISTEMA ---
   const [items, setItems] = useState([]);
   const [currentFolder, setCurrentFolder] = useState(null); 
+  const [currentFolderName, setCurrentFolderName] = useState('');
+  // O history agora vai guardar [{id, name}, {id, name}] para montar o caminho
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [uploadStatus, setUploadStatus] = useState({ state: 'idle', message: '' }); 
@@ -119,15 +121,28 @@ export default function App() {
   };
 
   const navigateTo = (folder) => {
-    setHistory([...history, currentFolder]);
+    // Adiciona a pasta atual ao histórico antes de mudar
+    setHistory([...history, { id: currentFolder, name: currentFolderName }]);
     setCurrentFolder(folder.id);
+    const fullName = folder.bloco ? `${folder.name} - BLOCO ${folder.bloco} APTO ${folder.apto}` : folder.name;
+    setCurrentFolderName(fullName);
   };
 
   const goBack = () => {
     const newHistory = [...history];
-    const prev = newHistory.pop();
+    const last = newHistory.pop();
     setHistory(newHistory);
-    setCurrentFolder(prev === undefined ? null : prev);
+    setCurrentFolder(last?.id === undefined ? null : last.id);
+    setCurrentFolderName(last?.name || '');
+  };
+
+  // Função para navegar clicando direto em um nome no caminho (breadcrumbs)
+  const jumpToHistory = (index) => {
+    const target = history[index];
+    const newHistory = history.slice(0, index);
+    setHistory(newHistory);
+    setCurrentFolder(target.id);
+    setCurrentFolderName(target.name);
   };
 
   const filesOnly = items.filter(i => !i.is_folder);
@@ -167,10 +182,9 @@ export default function App() {
     );
   };
 
-  // --- TELA DE SENHA ---
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+      <div className="min-h-[100dvh] bg-slate-900 flex items-center justify-center p-4">
         <form onSubmit={handleLogin} className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm w-full text-center">
           <div className="bg-blue-600 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6"><Lock className="text-white" size={32} /></div>
           <h2 className="text-2xl font-black text-slate-800 mb-2 uppercase">Acesso Restrito</h2>  
@@ -181,7 +195,6 @@ export default function App() {
     );
   }
 
-  // --- TELA PRINCIPAL ---
   return (
     <div {...getRootProps()} className="min-h-screen font-sans text-slate-900 pb-20 bg-slate-50 relative">
       <input {...getInputProps()} />
@@ -211,8 +224,35 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4">
-        <div className="flex items-center mb-6 h-8">
-          {currentFolder && <button onClick={goBack} className="flex items-center gap-2 text-blue-600 font-bold hover:underline"><ChevronLeft size={24} /> Voltar</button>}
+        {/* BREADCRUMBS (CAMINHO WINDOWS) */}
+        <div className="flex items-center mb-6 overflow-x-auto [scrollbar-width:none] whitespace-nowrap gap-2 py-2">
+          {currentFolder && (
+            <button onClick={goBack} className="flex items-center gap-1  font-bold hover:bg-blue-50 py-1 rounded-lg transition-all">
+              <ChevronLeft size={20} /> Voltar
+            </button>
+          )}
+          
+          <button onClick={() => { setCurrentFolder(null); setHistory([]); setCurrentFolderName(''); }} className={`text-sm px-2 py-2 font-bold tracking-wider ${!currentFolder ? 'text-slate-600' : ' hover:underline'}`}>
+            Inicio
+          </button>
+
+          {history.map((step, index) => step.id !== null && (
+            <React.Fragment key={step.id}>
+              <span className="text-slate-300">/</span>
+              <button onClick={() => jumpToHistory(index)} className="text-sm font-bold  hover:underline">
+                {step.name}
+              </button>
+            </React.Fragment>
+          ))}
+
+          {currentFolderName && (
+            <>
+              <span className="text-slate-300">/</span>
+              <span className="text-sm font-black text-blue-900 max-w-[200px]">
+                {currentFolderName}
+              </span>
+            </>
+          )}
         </div>
 
         {loading ? <div className="text-center py-24 text-slate-400 font-bold italic uppercase tracking-widest animate-pulse">Sincronizando...</div> : (
@@ -222,7 +262,7 @@ export default function App() {
                 className="group relative flex flex-col items-center p-6 bg-white rounded-3xl border border-slate-200 hover:border-blue-400 hover:shadow-xl transition-all cursor-pointer">
                 <button onClick={(e) => { e.stopPropagation(); deleteItem(item.id, item.is_folder, item.file_url); }} className="absolute top-3 right-3 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 p-1"><Trash2 size={16} /></button>
                 <div className="mb-4">{item.is_folder ? <Folder size={70} className="text-amber-400 fill-amber-400" /> : getFileIcon(item.name)}</div>
-                <span className="text-xs font-bold text-center line-clamp-2 text-slate-700 uppercase w-full px-2" title={item.is_folder ? (item.bloco ? `${item.name} - BLOCO ${item.bloco} APTO ${item.apto}` : item.name) : item.name}>
+                <span className="text-xs font-bold text-center line-clamp-2 text-slate-700 uppercase w-full" title={item.is_folder ? (item.bloco ? `${item.name} - BLOCO ${item.bloco} APTO ${item.apto}` : item.name) : item.name}>
                   {item.is_folder ? (item.bloco ? `${item.name} - BLOCO ${item.bloco} APTO ${item.apto}` : item.name) : item.name}
                 </span>
               </div>
