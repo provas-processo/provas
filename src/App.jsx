@@ -197,7 +197,7 @@ export default function App() {
         <form onSubmit={handleLogin} className="bg-slate-900 p-8 rounded-3xl shadow-2xl border border-slate-800 max-w-sm w-full text-center">
           <div className="bg-blue-600 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6"><Lock className="text-white" size={32} /></div>
           <h2 className="text-2xl font-black text-white mb-2 uppercase tracking-tighter">Acesso Restrito</h2>  
-          <input type="text" autoFocus style={{ WebkitTextSecurity: 'disc' }} className="w-full bg-slate-800 text-white p-4 rounded-xl mb-4 outline-none focus:ring-2 focus:ring-blue-500 font-bold text-center" placeholder="SENHA" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} />
+          <input type="text" autoCapitalize="none" autoCorrect="off" spellCheck="false" autoFocus style={{ WebkitTextSecurity: 'disc' }} className="w-full bg-slate-800 text-white p-4 rounded-xl mb-4 outline-none focus:ring-2 focus:ring-blue-500 font-bold text-center" placeholder="SENHA" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} />
           <button className="w-full bg-blue-600 text-white py-4 rounded-xl font-black uppercase tracking-widest hover:bg-blue-700 transition-colors">Entrar</button>
         </form>
       </div>
