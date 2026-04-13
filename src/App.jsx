@@ -1,25 +1,23 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { useDropzone } from 'react-dropzone';
 import { 
-  FolderPlus, FilePlus, ChevronLeft, File, Folder, 
-  Trash2, X, FileText, Image as ImageIcon, ChevronRight, Music, Video, Loader2, CheckCircle2, UploadCloud, Lock 
+  FolderPlus, FilePlus, ChevronLeft, File, Folder, Home,
+  Trash2, X, FileText, Image as ImageIcon, ChevronRight, Music, Video, Loader2, CheckCircle2, UploadCloud, Lock, AlertCircle, AlertTriangle, Square, CheckSquare
 } from 'lucide-react';
 
 export default function App() {
-  // --- ESTADOS DE ACESSO ---
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
   const SENHA_MESTRA = import.meta.env.VITE_APP_PASSWORD;
 
-  // --- ESTADOS DO SISTEMA ---
   const [items, setItems] = useState([]);
+  const [selectedItems, setSelectedItems] = useState([]);
   const [currentFolder, setCurrentFolder] = useState(null); 
   const [currentFolderName, setCurrentFolderName] = useState('');
-  // O history agora vai guardar [{id, name}, {id, name}] para montar o caminho
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [uploadStatus, setUploadStatus] = useState({ state: 'idle', message: '' }); 
+  const [uploadStatus, setUploadStatus] = useState({ state: 'idle', message: '', type: 'info' }); 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newResident, setNewResident] = useState({ nome: '', bloco: '', apto: '' });
   const [subfolderName, setSubfolderName] = useState('');
@@ -28,6 +26,27 @@ export default function App() {
   useEffect(() => {
     if (isAuthenticated) fetchItems();
   }, [currentFolder, isAuthenticated]);
+
+  const navigateCarousel = useCallback((direction) => {
+    if (!selectedFile) return;
+    const filesOnly = items.filter(i => !i.is_folder);
+    const currentIndex = filesOnly.findIndex(f => f.id === selectedFile.id);
+    let nextIndex = currentIndex + direction;
+    if (nextIndex >= filesOnly.length) nextIndex = 0;
+    if (nextIndex < 0) nextIndex = filesOnly.length - 1;
+    setSelectedFile(filesOnly[nextIndex]);
+  }, [selectedFile, items]);
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (!selectedFile) return;
+      if (e.key === 'ArrowRight') navigateCarousel(1);
+      if (e.key === 'ArrowLeft') navigateCarousel(-1);
+      if (e.key === 'Escape') setSelectedFile(null);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedFile, navigateCarousel]);
 
   async function fetchItems() {
     setLoading(true);
@@ -41,6 +60,7 @@ export default function App() {
       const { data, error } = await query.order('is_folder', { ascending: false });
       if (error) throw error;
       setItems(data || []);
+      setSelectedItems([]);
     } catch (error) {
       console.error(error.message);
     } finally {
@@ -50,22 +70,29 @@ export default function App() {
 
   const handleLogin = (e) => {
     e.preventDefault();
-    if (passwordInput === SENHA_MESTRA) {
-      setIsAuthenticated(true);
-    } else {
-      alert("Senha incorreta!");
-      setPasswordInput('');
-    }
+    if (passwordInput === SENHA_MESTRA) setIsAuthenticated(true);
+    else { alert("Senha incorreta!"); setPasswordInput(''); }
   };
 
   const onDropFiles = async (acceptedFiles) => {
     const filesArray = Array.from(acceptedFiles);
-    for (let i = 0; i < filesArray.length; i++) {
-      const file = filesArray[i];
-      setUploadStatus({ state: 'uploading', message: `Enviando ${file.name}...` });
+    let hasError = false;
+
+    for (const file of filesArray) {
+      if (file.size > 50 * 1024 * 1024) {
+        setUploadStatus({ state: 'error', message: `O arquivo ${file.name} excede o limite de 50MB`, type: 'error' });
+        hasError = true;
+        // Interrompe o loop ou apenas pula este arquivo, sem mostrar sucesso global
+        setTimeout(() => setUploadStatus({ state: 'idle', message: '', type: 'info' }), 5000);
+        continue;
+      }
+
+      setUploadStatus({ state: 'uploading', message: `Enviando ${file.name}...`, type: 'info' });
+      
       const cleanName = file.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w.-]/g, '_');
       const fileName = `${Date.now()}_${cleanName}`;
       const { data, error } = await supabase.storage.from('provas').upload(fileName, file);
+      
       if (!error && data) {
         const { data: urlData } = supabase.storage.from('provas').getPublicUrl(fileName);
         await supabase.from('folders_files').insert([{ 
@@ -73,27 +100,21 @@ export default function App() {
         }]);
       }
     }
-    setUploadStatus({ state: 'success', message: 'Upload concluído com sucesso!' });
-    fetchItems();
-    setTimeout(() => setUploadStatus({ state: 'idle', message: '' }), 3000);
-  };
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop: onDropFiles, noClick: true });
-
-  const handleDragStart = (e, itemId) => e.dataTransfer.setData("itemId", itemId);
-
-  const handleDropOnFolder = async (e, targetFolderId) => {
-    e.preventDefault();
-    const itemId = e.dataTransfer.getData("itemId");
-    if (itemId === targetFolderId) return;
-    await supabase.from('folders_files').update({ parent_id: targetFolderId }).eq('id', itemId);
+    // Só mostra sucesso se não houve erro de tamanho ou se pelo menos um arquivo subiu
+    if (!hasError) {
+      setUploadStatus({ state: 'success', message: 'Upload concluído com sucesso!', type: 'success' });
+      setTimeout(() => setUploadStatus({ state: 'idle', message: '', type: 'info' }), 3000);
+    }
     fetchItems();
   };
+
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop: onDropFiles, noClick: true, multiple: true });
 
   async function handleCreateFolder(e) {
     e.preventDefault();
     const folderData = currentFolder === null ? 
-      { name: newResident.nome, bloco: newResident.bloco, apto: newResident.apto, is_folder: true, parent_id: currentFolder } : 
+      { name: newResident.nome, bloco: newResident.bloco, apto: newResident.apto, is_folder: true, parent_id: null } : 
       { name: subfolderName, is_folder: true, parent_id: currentFolder };
     await supabase.from('folders_files').insert([folderData]);
     setIsModalOpen(false);
@@ -102,42 +123,50 @@ export default function App() {
     fetchItems();
   }
 
-  async function deleteItem(id, isFolder, fileUrl) {
-    if (!confirm("Excluir permanentemente?")) return;
-    if (!isFolder && fileUrl) {
-      const fileName = fileUrl.split('/').pop();
-      await supabase.storage.from('provas').remove([fileName]);
+  async function deleteSelected() {
+    const count = selectedItems.length;
+    if (count === 0 || !confirm(`Excluir ${count} item(ns) permanentemente?`)) return;
+    setLoading(true);
+    try {
+      const itemsToDelete = items.filter(i => selectedItems.includes(i.id));
+      for (const item of itemsToDelete) {
+        if (!item.is_folder && item.file_url) {
+          const fileName = item.file_url.split('/').pop();
+          await supabase.storage.from('provas').remove([fileName]);
+        }
+      }
+      const { error } = await supabase.from('folders_files').delete().in('id', selectedItems);
+      if (error) throw error;
+      setSelectedItems([]);
+      fetchItems();
+    } catch (error) {
+      alert("Erro ao excluir: " + error.message);
+    } finally {
+      setLoading(false);
     }
-    await supabase.from('folders_files').delete().eq('id', id);
-    fetchItems();
   }
+
+  const toggleSelect = (e, id) => {
+    e.stopPropagation();
+    setSelectedItems(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+  };
 
   const getFileIcon = (fileName) => {
     const ext = fileName.split('.').pop().toLowerCase();
-    if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) return <ImageIcon size={60} className="text-purple-500" />;
-    if (ext === 'pdf') return <FileText size={60} className="text-red-500" />;
-    if (['ogg', 'mp3', 'wav', 'm4a'].includes(ext)) return <Music size={60} className="text-emerald-500" />;
-    if (['mp4', 'webm', 'mov'].includes(ext)) return <Video size={60} className="text-blue-600" />;
-    return <File size={60} className="text-slate-400" />;
+    if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) return <ImageIcon size={60} className="text-purple-400" />;
+    if (ext === 'pdf') return <FileText size={60} className="text-red-400" />;
+    if (['mp4', 'webm', 'mov'].includes(ext)) return <Video size={60} className="text-blue-400" />;
+    return <File size={60} className="text-slate-500" />;
   };
 
   const navigateTo = (folder) => {
-    // Adiciona a pasta atual ao histórico antes de mudar
+    if (selectedItems.length > 0) return;
     setHistory([...history, { id: currentFolder, name: currentFolderName }]);
     setCurrentFolder(folder.id);
-    const fullName = folder.bloco ? `${folder.name} - BLOCO ${folder.bloco} APTO ${folder.apto}` : folder.name;
+    const fullName = folder.bloco ? `${folder.name} - BL ${folder.bloco} AP ${folder.apto}` : folder.name;
     setCurrentFolderName(fullName);
   };
 
-  const goBack = () => {
-    const newHistory = [...history];
-    const last = newHistory.pop();
-    setHistory(newHistory);
-    setCurrentFolder(last?.id === undefined ? null : last.id);
-    setCurrentFolderName(last?.name || '');
-  };
-
-  // Função para navegar clicando direto em um nome no caminho (breadcrumbs)
   const jumpToHistory = (index) => {
     const target = history[index];
     const newHistory = history.slice(0, index);
@@ -146,125 +175,121 @@ export default function App() {
     setCurrentFolderName(target.name);
   };
 
-  const filesOnly = items.filter(i => !i.is_folder);
-  const navigateCarousel = (direction) => {
-    const currentIndex = filesOnly.findIndex(f => f.id === selectedFile.id);
-    let nextIndex = currentIndex + direction;
-    if (nextIndex >= filesOnly.length) nextIndex = 0;
-    if (nextIndex < 0) nextIndex = filesOnly.length - 1;
-    setSelectedFile(filesOnly[nextIndex]);
+  const resetToHome = () => {
+    setCurrentFolder(null);
+    setHistory([]);
+    setCurrentFolderName('');
   };
 
   const renderFileContent = (file) => {
     const ext = file.name.split('.').pop().toLowerCase();
-    if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) return <img src={file.file_url} className="max-h-full max-w-full object-contain shadow-2xl" alt="Prova" />;
-    if (ext === 'pdf') return <iframe src={`${file.file_url}#toolbar=0`} className="w-full h-full rounded-lg" title="PDF Preview" />;
-    if (['ogg', 'mp3', 'wav', 'm4a'].includes(ext)) return (
-      <div className="flex flex-col items-center gap-4 text-white">
-        <Music size={100} />
-        <audio controls src={file.file_url} className="w-80" autoPlay />
-        <p className="font-bold">{file.name}</p>
-      </div>
-    );
+    if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) return <img src={file.file_url} className="max-h-full max-w-full object-contain shadow-2xl" alt="Preview" />;
+    if (ext === 'pdf') return <iframe src={`${file.file_url}#toolbar=0`} className="w-full h-full rounded-lg bg-white" title="PDF Preview" />;
     if (['mp4', 'webm', 'mov'].includes(ext)) return (
-      <video controls className="max-h-[80vh] max-w-full shadow-2xl" autoPlay>
-        <source src={file.file_url} type={`video/${ext === 'mov' ? 'mp4' : ext}`} />
-      </video>
+      <video controls className="max-h-[80vh] max-w-full shadow-2xl" autoPlay key={file.id}><source src={file.file_url} type={`video/${ext === 'mov' ? 'mp4' : ext}`} /></video>
     );
-    return (
-      <div className="text-white text-center">
-        <File size={100} className="mx-auto mb-4" />
-        <p className="mb-4">Arquivo sem prévia disponível.</p>
-        <div className="flex gap-4 justify-center">
-          <a href={file.file_url} target="_blank" className="bg-white text-blue-900 px-6 py-2 rounded-lg font-bold">Abrir</a>
-          <a href={file.file_url} download className="bg-slate-700 text-white px-6 py-2 rounded-lg font-bold">Baixar</a>
-        </div>
-      </div>
-    );
+    return <div className="text-white text-center"><File size={100} className="mx-auto mb-4" /><p>Sem prévia.</p></div>;
   };
 
   if (!isAuthenticated) {
     return (
-      <div className="min-h-[100dvh] bg-slate-900 flex items-center justify-center p-4">
-        <form onSubmit={handleLogin} className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm w-full text-center">
+      <div className="min-h-[100dvh] bg-slate-950 flex items-center justify-center p-4">
+        <form onSubmit={handleLogin} className="bg-slate-900 p-8 rounded-3xl shadow-2xl border border-slate-800 max-w-sm w-full text-center">
           <div className="bg-blue-600 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6"><Lock className="text-white" size={32} /></div>
-          <h2 className="text-2xl font-black text-slate-800 mb-2 uppercase">Acesso Restrito</h2>  
-          <input type="text" autoCapitalize="none" autoCorrect="off" spellCheck="false" autoFocus style={{ WebkitTextSecurity: 'disc' }} className="w-full bg-slate-100 p-4 rounded-xl mb-4 outline-none focus:ring-2 focus:ring-blue-500 font-bold text-center" placeholder="SENHA DE ACESSO" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} />
-          <button className="w-full bg-blue-600 text-white py-4 rounded-xl font-black uppercase tracking-widest hover:bg-blue-700 transition-all">Entrar no Sistema</button>
+          <h2 className="text-2xl font-black text-white mb-2 uppercase tracking-tighter">Acesso Restrito</h2>  
+          <input type="text" autoFocus style={{ WebkitTextSecurity: 'disc' }} className="w-full bg-slate-800 text-white p-4 rounded-xl mb-4 outline-none focus:ring-2 focus:ring-blue-500 font-bold text-center" placeholder="SENHA" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} />
+          <button className="w-full bg-blue-600 text-white py-4 rounded-xl font-black uppercase tracking-widest hover:bg-blue-700 transition-colors">Entrar</button>
         </form>
       </div>
     );
   }
 
   return (
-    <div {...getRootProps()} className="min-h-screen font-sans text-slate-900 pb-20 bg-slate-50 relative">
-      <input {...getInputProps()} />
-
-      {isDragActive && (
-        <div className="fixed inset-0 z-[150] bg-blue-600/90 backdrop-blur-sm flex flex-col items-center justify-center text-white p-6">
-          <UploadCloud size={120} className="animate-bounce mb-4" />
-          <h2 className="text-4xl font-black uppercase tracking-tighter">Solte para Enviar</h2>
-        </div>
-      )}
+    <div {...getRootProps()} className="min-h-screen font-sans text-slate-100 pb-20 bg-slate-950 relative">
+      <input {...getInputProps()} multiple />
 
       {uploadStatus.state !== 'idle' && (
-        <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[200] bg-white border border-slate-200 px-8 py-4 rounded-2xl shadow-2xl flex items-center gap-4 animate-in slide-in-from-bottom-5">
-          {uploadStatus.state === 'uploading' ? <Loader2 className="animate-spin text-blue-600" size={24} /> : <CheckCircle2 className="text-emerald-500" size={24} />}
-          <span className="font-black text-sm uppercase text-slate-700">{uploadStatus.message}</span>
+        <div className={`fixed bottom-10 left-1/2 -translate-x-1/2 z-[200] border px-8 py-4 rounded-2xl shadow-2xl flex items-center gap-4 animate-in slide-in-from-bottom-5 ${uploadStatus.type === 'error' ? 'bg-red-900 border-red-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-200'}`}>
+          {uploadStatus.state === 'uploading' ? <Loader2 className="animate-spin text-blue-500" size={24} /> : 
+           uploadStatus.state === 'error' ? <AlertTriangle className="text-red-400" size={24} /> : 
+           <CheckCircle2 className="text-emerald-500" size={24} />}
+          <span className="font-black text-sm uppercase">{uploadStatus.message}</span>
         </div>
       )}
 
-      <header className="bg-white border-b border-slate-200 py-10 mb-10 shadow-sm">
+      <header className="bg-slate-900 border-b border-slate-800 py-10 mb-10 shadow-md">
         <div className="max-w-4xl mx-auto px-4 text-center">
-          <h1 className="text-3xl font-black text-blue-900 tracking-tighter uppercase mb-6">Gestão de Provas</h1>
-          <div className="flex flex-col sm:flex-row gap-4 w-full max-w-md mx-auto">
+          <h1 className="text-3xl font-black text-white tracking-tighter uppercase mb-6 text-glow">Gestão de Provas</h1>
+          <div className="flex flex-col sm:flex-row gap-4 w-full max-w-md mx-auto mb-6">
             <button onClick={() => setIsModalOpen(true)} className="flex-1 bg-blue-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-blue-700 flex items-center justify-center gap-2 transition-all"><FolderPlus size={20} /> Nova Pasta</button>
-            <label className="flex-1 bg-emerald-600 text-white px-6 py-3 rounded-xl font-bold cursor-pointer hover:bg-emerald-700 flex items-center justify-center gap-2 transition-all"><FilePlus size={20} /> Upload <input type="file" hidden onChange={(e) => onDropFiles(e.target.files)} /></label>
+            <label className="flex-1 bg-emerald-600 text-white px-6 py-3 rounded-xl font-bold cursor-pointer hover:bg-emerald-700 flex items-center justify-center gap-2 transition-all">
+              <FilePlus size={20} /> Upload Múltiplo 
+              <input type="file" hidden multiple onChange={(e) => onDropFiles(e.target.files)} />
+            </label>
+          </div>
+          <div className="flex items-center justify-center gap-2 text-amber-400 bg-amber-400/10 w-fit mx-auto px-4 py-2 rounded-full border border-amber-400/20">
+            <AlertCircle size={16} />
+            <span className="text-xs font-bold uppercase tracking-wider">Limite de 50 MB por arquivo</span>
           </div>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-4">
-        {/* BREADCRUMBS (CAMINHO WINDOWS) */}
-        <div className="flex items-center mb-6 overflow-x-auto [scrollbar-width:none] whitespace-nowrap gap-2 py-2">
-          {currentFolder && (
-            <button onClick={goBack} className="flex items-center gap-1  font-bold hover:bg-blue-50 py-1 rounded-lg transition-all">
-              <ChevronLeft size={20} /> Voltar
-            </button>
-          )}
-          
-          <button onClick={() => { setCurrentFolder(null); setHistory([]); setCurrentFolderName(''); }} className={`text-sm px-2 py-2 font-bold tracking-wider ${!currentFolder ? 'text-slate-600' : ' hover:underline'}`}>
-            Inicio
-          </button>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+          <nav className="flex items-center bg-slate-900/50 border border-slate-800 p-2 rounded-2xl overflow-x-auto [scrollbar-width:none] no-scrollbar">
+            <button onClick={resetToHome} className="flex items-center justify-center p-2 rounded-xl hover:bg-slate-800 text-slate-400 hover:text-white transition-all shrink-0"><Home size={18} /></button>
 
-          {history.map((step, index) => step.id !== null && (
-            <React.Fragment key={step.id}>
-              <span className="text-slate-300">/</span>
-              <button onClick={() => jumpToHistory(index)} className="text-sm font-bold  hover:underline">
-                {step.name}
+            {history.map((step, index) => step.id !== null && (
+              <React.Fragment key={index}>
+                <ChevronRight size={14} className="text-slate-700 mx-1 shrink-0" />
+                <button onClick={() => jumpToHistory(index)} className="px-3 py-1.5 rounded-xl text-sm font-bold text-slate-400 hover:bg-slate-800 hover:text-blue-400 transition-all whitespace-nowrap">{step.name}</button>
+              </React.Fragment>
+            ))}
+
+            {currentFolderName && (
+              <>
+                <ChevronRight size={14} className="text-slate-700 mx-1 shrink-0" />
+                <span className="px-3 py-1.5 rounded-xl text-sm font-black text-blue-400 bg-blue-400/10 whitespace-nowrap">{currentFolderName}</span>
+              </>
+            )}
+          </nav>
+
+          <div className="flex items-center gap-3 self-end md:self-auto">
+            {currentFolder && (
+              <button onClick={() => {
+                const newHistory = [...history];
+                const last = newHistory.pop();
+                setHistory(newHistory);
+                setCurrentFolder(last?.id === undefined ? null : last.id);
+                setCurrentFolderName(last?.name || '');
+              }} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-sm transition-all"><ChevronLeft size={18} /> Voltar</button>
+            )}
+            {selectedItems.length > 0 && (
+              <button onClick={deleteSelected} className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-xl flex items-center gap-2 font-bold animate-in fade-in zoom-in">
+                <Trash2 size={18} /> Excluir ({selectedItems.length})
               </button>
-            </React.Fragment>
-          ))}
-
-          {currentFolderName && (
-            <>
-              <span className="text-slate-300">/</span>
-              <span className="text-sm font-black text-blue-900 max-w-[200px]">
-                {currentFolderName}
-              </span>
-            </>
-          )}
+            )}
+          </div>
         </div>
 
-        {loading ? <div className="text-center py-24 text-slate-400 font-bold italic uppercase tracking-widest animate-pulse">Sincronizando...</div> : (
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-32 opacity-50">
+            <Loader2 className="animate-spin text-blue-500 mb-4" size={40} />
+            <span className="font-black uppercase tracking-[0.2em] text-sm text-slate-500">Sincronizando</span>
+          </div>
+        ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">
             {items.map((item) => (
-              <div key={item.id} draggable={!item.is_folder} onDragStart={(e) => handleDragStart(e, item.id)} onDragOver={(e) => item.is_folder && e.preventDefault()} onDrop={(e) => item.is_folder && handleDropOnFolder(e, item.id)} onClick={() => item.is_folder ? navigateTo(item) : setSelectedFile(item)}
-                className="group relative flex flex-col items-center p-6 bg-white rounded-3xl border border-slate-200 hover:border-blue-400 hover:shadow-xl transition-all cursor-pointer">
-                <button onClick={(e) => { e.stopPropagation(); deleteItem(item.id, item.is_folder, item.file_url); }} className="absolute top-3 right-3 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 p-1"><Trash2 size={16} /></button>
-                <div className="mb-4">{item.is_folder ? <Folder size={70} className="text-amber-400 fill-amber-400" /> : getFileIcon(item.name)}</div>
-                <span className="text-xs font-bold text-center line-clamp-2 text-slate-700 uppercase w-full" title={item.is_folder ? (item.bloco ? `${item.name} - BLOCO ${item.bloco} APTO ${item.apto}` : item.name) : item.name}>
-                  {item.is_folder ? (item.bloco ? `${item.name} - BLOCO ${item.bloco} APTO ${item.apto}` : item.name) : item.name}
+              <div key={item.id} onClick={() => item.is_folder ? navigateTo(item) : setSelectedFile(item)}
+                className={`group relative flex flex-col items-center p-6 bg-slate-900 rounded-3xl border transition-all cursor-pointer ${selectedItems.includes(item.id) ? 'border-blue-500 ring-2 ring-blue-500 shadow-blue-500/10' : 'border-slate-800 hover:border-blue-500 hover:-translate-y-1'}`}>
+                
+                <button onClick={(e) => toggleSelect(e, item.id)} className={`absolute top-4 left-4 p-1 rounded-lg transition-all z-10 ${selectedItems.includes(item.id) ? 'text-blue-500 scale-110' : 'text-slate-600 opacity-0 group-hover:opacity-100'}`}>
+                  {selectedItems.includes(item.id) ? <CheckSquare size={22} className="fill-blue-500/10" /> : <Square size={22}/>}
+                </button>
+
+                <div className="mb-4">{item.is_folder ? <Folder size={70} className="text-amber-500 fill-amber-500/10 transition-transform group-hover:scale-105" /> : getFileIcon(item.name)}</div>
+                <span className="text-[11px] font-bold text-center line-clamp-2 text-slate-300 uppercase w-full leading-tight tracking-wide">
+                  {item.is_folder && item.bloco ? `${item.name} - BL ${item.bloco} AP ${item.apto}` : item.name}
                 </span>
               </div>
             ))}
@@ -273,25 +298,43 @@ export default function App() {
       </main>
 
       {isModalOpen && (
-        <div className="fixed inset-0 bg-blue-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden">
-            <div className="bg-blue-600 p-6 flex justify-between text-white font-bold uppercase"><h2>{currentFolder === null ? "Pasta Morador" : "Subpasta"}</h2><button onClick={() => setIsModalOpen(false)}><X /></button></div>
-            <form onSubmit={handleCreateFolder} className="p-8 flex flex-col gap-4">
-              {currentFolder === null ? (<><input required className="w-full bg-slate-100 p-4 rounded-xl outline-none" value={newResident.nome} onChange={e => setNewResident({...newResident, nome: e.target.value})} placeholder="Nome" /><div className="flex gap-4"><input required className="flex-1 w-full bg-slate-100 p-4 rounded-xl outline-none" value={newResident.bloco} onChange={e => setNewResident({...newResident, bloco: e.target.value})} placeholder="Bloco" /><input required className="flex-1 w-full bg-slate-100 p-4 rounded-xl outline-none" value={newResident.apto} onChange={e => setNewResident({...newResident, apto: e.target.value})} placeholder="Apto" /></div></>) : 
-              (<input required autoFocus className="w-full bg-slate-100 p-4 rounded-xl outline-none" value={subfolderName} onChange={e => setSubfolderName(e.target.value)} placeholder="Nome da subpasta" />)}
-              <button className="bg-blue-600 text-white font-bold py-4 rounded-xl uppercase tracking-widest mt-2">Criar</button>
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 z-[300]">
+          <div className="bg-slate-900 border border-slate-800 rounded-[2.5rem] shadow-2xl w-full max-w-md overflow-hidden text-center animate-in zoom-in-95">
+            <div className="bg-blue-600 p-8 flex justify-between items-center text-white font-black uppercase">
+              <h2>{currentFolder === null ? "Novo Morador" : "Nova Subpasta"}</h2>
+              <button onClick={() => setIsModalOpen(false)}><X size={28} /></button>
+            </div>
+            <form onSubmit={handleCreateFolder} className="p-8 flex flex-col gap-5">
+              {currentFolder === null ? (
+                <>
+                  <input required className="w-full bg-slate-800 text-white p-5 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-bold" value={newResident.nome} onChange={e => setNewResident({...newResident, nome: e.target.value})} placeholder="Nome do Morador" />
+                  <div className="flex gap-4">
+                    <input required className="flex-1 w-full bg-slate-800 text-white p-5 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-bold" value={newResident.bloco} onChange={e => setNewResident({...newResident, bloco: e.target.value})} placeholder="Bloco" />
+                    <input required className="flex-1 w-full bg-slate-800 text-white p-5 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-bold" value={newResident.apto} onChange={e => setNewResident({...newResident, apto: e.target.value})} placeholder="Apto" />
+                  </div>
+                </>
+              ) : (
+                <input required autoFocus className="w-full bg-slate-800 text-white p-5 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-bold" value={subfolderName} onChange={e => setSubfolderName(e.target.value)} placeholder="Nome da subpasta" />
+              )}
+              <button className="bg-blue-600 text-white font-black py-5 rounded-2xl uppercase tracking-widest hover:bg-blue-700 transition-all">Criar</button>
             </form>
           </div>
         </div>
       )}
 
       {selectedFile && (
-        <div className="fixed inset-0 bg-slate-950/95 flex flex-col items-center justify-center z-[100] p-4">
-          <div className="absolute top-5 right-5 flex gap-4 text-white"><button onClick={() => setSelectedFile(null)} className="hover:text-red-400 transition"><X size={40}/></button></div>
-          <button onClick={() => navigateCarousel(-1)} className="absolute left-4 text-white/50 hover:text-white"><ChevronLeft size={60}/></button>
-          <div className="w-full max-w-6xl h-[85vh] flex items-center justify-center">{renderFileContent(selectedFile)}</div>
-          <button onClick={() => navigateCarousel(1)} className="absolute right-4 text-white/50 hover:text-white"><ChevronRight size={60}/></button>
-          <div className="absolute bottom-6 text-white/70 font-bold bg-white/10 px-6 py-2 rounded-full backdrop-blur-md italic">{selectedFile.name}</div>
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xl flex flex-col items-center justify-center z-[400] p-4 animate-in fade-in duration-300">
+          <div className="absolute top-8 right-8 text-white z-50">
+            <button onClick={() => setSelectedFile(null)} className="hover:text-red-500 transition-all bg-white/5 p-2 rounded-full"><X size={40}/></button>
+          </div>
+          <button onClick={() => navigateCarousel(-1)} className="absolute left-6 text-white/20 hover:text-white transition-all z-50"><ChevronLeft size={80}/></button>
+          <div className="w-full max-w-5xl h-[80vh] flex items-center justify-center">
+            {renderFileContent(selectedFile)}
+          </div>
+          <button onClick={() => navigateCarousel(1)} className="absolute right-6 text-white/20 hover:text-white transition-all z-50"><ChevronRight size={80}/></button>
+          <div className="mt-8 px-6 py-2 bg-white/5 border border-white/10 rounded-full">
+            <span className="text-white/60 font-black text-[10px] uppercase tracking-widest">{selectedFile.name}</span>
+          </div>
         </div>
       )}
     </div>
